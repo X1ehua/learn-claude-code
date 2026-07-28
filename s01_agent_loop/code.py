@@ -29,6 +29,8 @@ Usage:
 
 import os
 import subprocess
+from datetime import datetime
+import json
 
 try:
     import readline
@@ -80,14 +82,78 @@ def run_bash(command: str) -> str:
     except (FileNotFoundError, OSError) as e:
         return f"Error: {e}"
 
+def print_timestamp():
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+def _json_default(obj):
+    """json.dumps 的兜底：把 Pydantic 对象（如 TextBlock/ToolUseBlock）转成 dict。"""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+def format_response(response) -> str:
+    """把 Anthropic Message 对象格式化成易读的文本（保留所有字段）。"""
+    msg_fields = [
+        "id", "container", "model", "role",
+        "stop_reason", "stop_sequence", "stop_details",
+        "type", "base_resp",
+    ]
+    usage_fields = [
+        "input_tokens", "output_tokens",
+        "cache_creation_input_tokens", "cache_read_input_tokens",
+        "cache_creation", "inference_geo",
+        "output_tokens_details", "server_tool_use",
+        "service_tier",
+    ]
+
+    lines = ["Message"]
+    for f in msg_fields:
+        lines.append(f"  {f:<22}: {getattr(response, f, None)!r}")
+
+    lines += ["", "Usage"]
+    usage = response.usage
+    for f in usage_fields:
+        lines.append(f"  {f:<28}: {getattr(usage, f, None)!r}")
+
+    lines += ["", f"Content [{len(response.content)} blocks]"]
+    for i, block in enumerate(response.content, 1):
+        btype = getattr(block, "type", "?")
+        cls_name = type(block).__name__
+        lines += ["", f"  [{i}] {cls_name} (type={btype})"]
+        if btype == "text":
+            lines.append(f"      citations: {getattr(block, 'citations', None)!r}")
+            lines.append("      text:")
+            for ln in str(getattr(block, "text", "")).splitlines() or [""]:
+                lines.append(f"        {ln}")
+        elif btype == "tool_use":
+            lines.append(f"      id:     {getattr(block, 'id', None)!r}")
+            lines.append(f"      name:   {getattr(block, 'name', None)!r}")
+            lines.append(f"      caller: {getattr(block, 'caller', None)!r}")
+            lines.append("      input:")
+            for k, v in (getattr(block, "input", None) or {}).items():
+                lines.append(f"        {k}: {v!r}")
+        else:
+            # 未知 block 类型：列出所有属性
+            for attr in sorted(vars(block).keys()) if hasattr(block, "__dict__") else []:
+                lines.append(f"      {attr}: {getattr(block, attr)!r}")
+
+    return "\n".join(lines)
 
 # ── The core pattern: a while loop that calls tools until the model stops ──
 def agent_loop(messages: list):
+    counter = 1
     while True:
+        print(f'\n\n{print_timestamp()} >>>', counter, flush=True)
+        print('>>> messages:', json.dumps(messages, indent=4, ensure_ascii=False, default=_json_default), flush=True)
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
             tools=TOOLS, max_tokens=8000,
         )
+        print(f'\n{print_timestamp()} >>> response:', flush=True)
+        print(json.dumps(response.model_dump(), indent=4, ensure_ascii=False), flush=True)
+        print('\n')
+        # print(format_response(response), flush=True)
+        # print('\n')
 
         # Append assistant turn
         messages.append({"role": "assistant", "content": response.content})
@@ -100,8 +166,12 @@ def agent_loop(messages: list):
         results = []
         for block in response.content:
             if block.type == "tool_use":
+                print('\n>>>>>>>> Tool Use <<<<<<<<<<')
+                print(f'{print_timestamp()}', flush=True)
                 print(f"\033[33m$ {block.input['command']}\033[0m")
                 output = run_bash(block.input["command"])
+                print('\n>>>>>>>> Tool Result <<<<<<<<<<')
+                print(f'{print_timestamp()}', flush=True)
                 print(output[:200])
                 results.append({
                     "type": "tool_result",
@@ -111,6 +181,7 @@ def agent_loop(messages: list):
 
         # Feed tool results back, loop continues
         messages.append({"role": "user", "content": results})
+        counter += 1
 
 
 # ── Entry point ──────────────────────────────────────────
