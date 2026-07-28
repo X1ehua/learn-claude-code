@@ -15,6 +15,8 @@ s02: Tool Use — 在 s01 基础上新增 4 个工具 + 分发映射。
 
 import os, subprocess
 from pathlib import Path
+from datetime import datetime
+import json
 
 try:
     import readline
@@ -57,6 +59,21 @@ def run_bash(command: str) -> str:
         return "Error: Timeout (120s)"
     except (FileNotFoundError, OSError) as e:
         return f"Error: {e}"
+
+
+def get_formatted_ts():
+    now = datetime.now()
+    last = getattr(get_formatted_ts, "_last", None)
+    delta = 0.0 if last is None else (now - last).total_seconds()
+    get_formatted_ts._last = now
+    return f"{now.strftime('%H:%M:%S.%f')[:-3]} +{delta:.3f}"
+
+
+def _json_default(obj):
+    """json.dumps 的兜底：把 Pydantic 对象（如 TextBlock/ToolUseBlock）转成 dict。"""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -194,17 +211,77 @@ TOOL_HANDLERS = {
 
 
 # ═══════════════════════════════════════════════════════════
+#  NEW in s02: Token 差分分析 — 用 4 个 max_tokens=1 的请求
+#  分解 input_tokens → system / messages / tools / formatting
+# ═══════════════════════════════════════════════════════════
+
+def _measure(system: str, messages: list, tools: list) -> int:
+    """发一个 max_tokens=1 的请求，返回 input_tokens（含 cache_read）。"""
+    resp = client.messages.create(
+        model=MODEL, system=system, messages=messages,
+        tools=tools, max_tokens=1,
+    )
+    return resp.usage.input_tokens + (resp.usage.cache_read_input_tokens or 0)
+
+
+def token_breakdown(system: str, messages: list, tools: list) -> dict:
+    """差分法分解 input_tokens → {system, messages, tools, formatting, total}。
+
+    4 个请求，只差一个变量，相减得到各部分：
+      full       = system + messages + tools
+      no_system  = ""      + messages + tools
+      no_tools   = system  + messages + ""
+      baseline   = ""      + messages + ""
+      → messages = baseline
+      → system   = no_tools  - baseline
+      → tools    = no_system - baseline
+      → formatting = full - system - messages - tools
+    """
+    full      = _measure(system, messages, tools)
+    no_system = _measure("", messages, tools)
+    no_tools  = _measure(system, messages, [])
+    baseline  = _measure("", messages, [])
+
+    msgs = baseline
+    sys_t = no_tools - baseline
+    tools_t = no_system - baseline
+    fmt = full - sys_t - msgs - tools_t
+
+    return {"system": sys_t, "messages": msgs, "tools": tools_t,
+            "formatting": fmt, "total": full}
+
+
+# ═══════════════════════════════════════════════════════════
 #  agent_loop — 与 s01 结构完全一致，只改了工具执行那部分
 #  s01: output = run_bash(block.input["command"])
 #  s02: output = TOOL_HANDLERS[block.name](**block.input)
 # ═══════════════════════════════════════════════════════════
 
 def agent_loop(messages: list):
+    counter = 1
     while True:
+        print(f'\n\n{get_formatted_ts()} >>>', counter, flush=True)
+        print('>>> messages:', json.dumps(messages, indent=4, ensure_ascii=False, default=_json_default), flush=True)
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
             tools=TOOLS, max_tokens=8000,
         )
+        print(f'\n{get_formatted_ts()} >>> response:', flush=True)
+        print(json.dumps(response.model_dump(), indent=4, ensure_ascii=False), flush=True)
+
+        # ── Token Breakdown（差分法，3 次额外 API 调用）──
+        bd = token_breakdown(SYSTEM, messages, TOOLS)
+        print(f'\n  ┌─ Token Breakdown (input_tokens = {bd["total"]}) ────────┐')
+        print(f'  │ {"component":<12s}  {"tokens":>6s}  {"pct":>6s}  │')
+        print(f'  │ {"─"*40} │')
+        for k in ("system", "messages", "tools", "formatting"):
+            pct = f'{bd[k] / bd["total"] * 100:5.1f}%' if bd["total"] else "  ---"
+            print(f'  │ {k:<12s}  {bd[k]:>6d}  {pct:>6s}  │')
+        print(f'  │ {"─"*40} │')
+        print(f'  │ {"total":<12s}  {bd["total"]:>6d}  {"100.0%":>6s}  │')
+        print(f'  │ {"output":<12s}  {response.usage.output_tokens:>6d}  {"":>6s}  │')
+        print(f'  └─ {"─"*40} ┘\n')
+
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
@@ -213,13 +290,18 @@ def agent_loop(messages: list):
         results = []
         for block in response.content:
             if block.type == "tool_use":
-                print(f"\033[33m> {block.name}\033[0m")
+                print('\n>>>>>>>> Tool Use <<<<<<<<<<')
+                print(f'{get_formatted_ts()}', flush=True)
+                print(f"\033[33m> {block.name} {block.input}\033[0m")
                 handler = TOOL_HANDLERS.get(block.name)
                 output = handler(**block.input) if handler else f"Unknown: {block.name}"
+                print('\n>>>>>>>> Tool Result <<<<<<<<<<')
+                print(f'{get_formatted_ts()}', flush=True)
                 print(str(output)[:200])
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
 
         messages.append({"role": "user", "content": results})
+        counter += 1
 
 
 if __name__ == "__main__":
