@@ -166,8 +166,30 @@ TOOLS = [
     {"name": "glob", "description": "Find files matching a glob pattern.",
      "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}},
     # s05: new tool
-    {"name": "todo_write", "description": "Create and manage a task list for your current coding session.",
-     "input_schema": {"type": "object", "properties": {"todos": {"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}}, "required": ["content", "status"]}}}, "required": ["todos"]}},
+    {
+        "name": "todo_write",
+        "description": "Create and manage a task list for your current coding session.",
+        "input_schema": {
+            "type": "object", 
+            "properties": {
+                "todos": {
+                    "type": "array", 
+                    "items": {
+                        "type": "object", 
+                        "properties": {
+                            "content": {"type": "string"}, 
+                            "status": {
+                                "type": "string", 
+                                "enum": ["pending", "in_progress", "completed"]
+                            }
+                        }, 
+                        "required": ["content", "status"]
+                    }
+                }
+            }, 
+            "required": ["todos"]
+        }
+    },
 ]
 
 TOOL_HANDLERS = {

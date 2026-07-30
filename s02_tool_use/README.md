@@ -3,11 +3,12 @@
 [中文](README.md) · [English](README.en.md) · [日本語](README.ja.md)
 
 s01 → `s02` → [s03](../s03_permission/) → s04 → ... → s20
+
 > *"加一个工具, 只加一个 handler"* — 循环不用动, 新工具注册进 dispatch map 就行。
 >
 > **Harness 层**: 工具分发 — 扩展模型能触达的边界。
 
----
+***
 
 ## 只有 bash 一个工具
 
@@ -15,20 +16,20 @@ s01 的 Agent 只有一个 bash 工具。读文件要 `cat`，写文件要 `echo
 
 模型想的是"读这个文件"，却要拼出 `cat path/to/file`。多了一层翻译，浪费 token，还容易拼错。
 
----
+***
 
 ## 全局视角：工具分发
 
 ![Tool Dispatch](images/tool-dispatch.svg)
 
-s01 的循环完全保留（LLM 调用、stop_reason 判断、消息追加）。唯一的变动在工具执行那 1 行：`run_bash()` 替换为 `TOOL_HANDLERS[block.name]()` 查表分发。
+s01 的循环完全保留（LLM 调用、stop\_reason 判断、消息追加）。唯一的变动在工具执行那 1 行：`run_bash()` 替换为 `TOOL_HANDLERS[block.name]()` 查表分发。
 
 给 Agent 加一个工具只需要做两件事：
 
 1. **定义工具**：在 `TOOLS` 数组里加一条描述
 2. **注册处理函数**：在 `TOOL_HANDLERS` 字典里加一个映射
 
----
+***
 
 ## 从 1 个工具到 5 个工具
 
@@ -77,7 +78,7 @@ def run_glob(pattern):
     return "\n".join(g.glob(pattern, root_dir=WORKDIR))
 ```
 
----
+***
 
 ## 工具分发
 
@@ -100,37 +101,37 @@ for block in response.content:
 
 加一个工具 = 在 `TOOLS` 数组加一条 + 在 `TOOL_HANDLERS` 字典加一行。循环不变。
 
----
+***
 
 ## 多个工具调用
 
-模型经常一次返回多个 tool_use："读一下 a.py 和 b.py，然后列出所有 .py 文件"。
+模型经常一次返回多个 tool\_use："读一下 a.py 和 b.py，然后列出所有 .py 文件"。
 
 教学版按 `response.content` 原始顺序逐个执行。CC 的做法更复杂：按原始顺序切成连续 batch，batch 内并发安全的工具并行执行，batch 间严格顺序（见附录）。
 
----
+***
 
 ## 速查
 
-| 概念 | 一句话 |
-|------|--------|
-| TOOL_HANDLERS | 工具名 → 处理函数的字典。加工具 = 加一行映射 |
-| 工具定义 | 告诉模型"我能做什么"的 JSON schema |
-| 多工具调用 | 模型可一次返回多个 tool_use，教学版按原始顺序逐个执行 |
-| 循环不变 | s01 的 `while True` 循环一行都没改 |
+| 概念             | 一句话                              |
+| -------------- | -------------------------------- |
+| TOOL\_HANDLERS | 工具名 → 处理函数的字典。加工具 = 加一行映射        |
+| 工具定义           | 告诉模型"我能做什么"的 JSON schema         |
+| 多工具调用          | 模型可一次返回多个 tool\_use，教学版按原始顺序逐个执行 |
+| 循环不变           | s01 的 `while True` 循环一行都没改       |
 
----
+***
 
 ## 相对 s01 的变更
 
-| 组件 | 之前 (s01) | 之后 (s02) |
-|------|-----------|-----------|
-| 工具数量 | 1 (bash) | 5 (+read, write, edit, glob) |
-| 工具执行 | 硬编码 `run_bash()` | TOOL_HANDLERS 查表分发 |
-| 路径安全 | 无 | safe_path 校验（仅 file tools） |
-| 循环 | `while True` + `stop_reason` | 与 s01 完全一致 |
+| 组件   | 之前 (s01)                     | 之后 (s02)                     |
+| ---- | ---------------------------- | ---------------------------- |
+| 工具数量 | 1 (bash)                     | 5 (+read, write, edit, glob) |
+| 工具执行 | 硬编码 `run_bash()`             | TOOL\_HANDLERS 查表分发          |
+| 路径安全 | 无                            | safe\_path 校验（仅 file tools）  |
+| 循环   | `while True` + `stop_reason` | 与 s01 完全一致                   |
 
----
+***
 
 ## 试一下
 
@@ -148,7 +149,7 @@ python s02_tool_use/code.py
 
 观察重点：模型什么时候只调一个工具，什么时候一次调多个？多个工具调用的顺序和结果是否正确？
 
----
+***
 
 ## 接下来
 
@@ -174,13 +175,13 @@ s03 Permission → 在工具执行之前加一道门：这个操作安全吗？�
 
 教学版按原始顺序逐个执行，不做并发。CC 用 `isConcurrencySafe(input)` 判断能否并发——注意这不是简单的"只读 vs 写"，而是按具体输入判断：
 
-| | isReadOnly | isConcurrencySafe |
-|---|---|---|
-| FileRead | true | true |
-| Glob | true | true |
-| Bash `ls` | true | **true** ← 关键差异 |
-| Bash `rm` | false | false |
-| TaskCreate | false | **true** ← 改状态但可并发（TaskCreate 在 s12 介绍） |
+| <br />     | isReadOnly | isConcurrencySafe                       |
+| ---------- | ---------- | --------------------------------------- |
+| FileRead   | true       | true                                    |
+| Glob       | true       | true                                    |
+| Bash `ls`  | true       | **true** ← 关键差异                         |
+| Bash `rm`  | false      | false                                   |
+| TaskCreate | false      | **true** ← 改状态但可并发（TaskCreate 在 s12 介绍） |
 
 CC 的 Bash tool 的 `isConcurrencySafe` 等于 `isReadOnly`——只读命令可并发，写命令不可。TaskCreate 虽然改了任务文件，但每次都写不同的文件，所以可以并发。
 
@@ -211,7 +212,9 @@ CC 的每个工具调用经过严格的 5 步验证（`toolExecution.ts`）：
 
 ### 五、流式工具执行
 
-CC 的 `StreamingToolExecutor`（`StreamingToolExecutor.ts`）让工具在模型还在生成时就启动——不等模型说完。`read_file` 可能在模型还在输出"我来分析"的时候就跑完了。教学版不实现这个，目标和 s01 一致——概念清晰，不追求性能极致。
+CC 的 `StreamingToolExecutor`（`StreamingToolExecutor.ts`）让工具在模型还在生成时就启动——不等模型说完。`read_file` 可能在模型还在输出"我来分析"的时候就跑完了。 // note
+
+教学版不实现这个，目标和 s01 一致——概念清晰，不追求性能极致。
 
 ### 六、工具结果持久化
 
