@@ -200,18 +200,18 @@ def permission_hook(block):
 def log_hook(block):
     """PreToolUse: log every tool call."""
     args_preview = str(list(block.input.values())[:2])[:60]
-    print(f"\033[90m[HOOK] {block.name}({args_preview})\033[0m")
+    print(f"\033[90m{get_formatted_ts()} >>> [HOOK] {block.name}({args_preview})\033[0m")
     return None
 
 def large_output_hook(block, output):
     """PostToolUse: warn on large output."""
     if len(str(output)) > 100000:
-        print(f"\033[33m[HOOK] ⚠ Large output from {block.name}: {len(str(output))} chars\033[0m")
+        print(f"\033[33m{get_formatted_ts()} >>> [HOOK] ⚠ Large output from {block.name}: {len(str(output))} chars\033[0m")
     return None
 
 # UserPromptSubmit hook: log user input before it reaches the LLM
 def context_inject_hook(query: str):
-    print(f"\033[90m[HOOK] UserPromptSubmit: working in {WORKDIR}\033[0m")
+    print(f"\033[90m{get_formatted_ts()} >>> [HOOK] UserPromptSubmit: working in {WORKDIR}\033[0m")
     return None
 
 # Stop hook: print summary when loop is about to exit
@@ -219,7 +219,7 @@ def summary_hook(messages: list):
     tool_count = sum(1 for m in messages
                      for b in (m.get("content") if isinstance(m.get("content"), list) else [])
                      if isinstance(b, dict) and b.get("type") == "tool_result")
-    print(f"\033[90m[HOOK] Stop: session used {tool_count} tool calls\033[0m")
+    print(f"\033[90m{get_formatted_ts()} >>> [HOOK] Stop: session used {tool_count} tool calls\033[0m")
     return None
 
 register_hook("UserPromptSubmit", context_inject_hook)
